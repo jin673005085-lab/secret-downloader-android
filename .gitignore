@@ -1,0 +1,16 @@
+.gradle/
+.kotlin/
+.debug/
+.idea/
+.env
+.env.*
+**/build/
+local.properties
+*.jks
+*.keystore
+*.apk
+*.aab
+*.db
+*.db-shm
+*.db-wal
+*.log

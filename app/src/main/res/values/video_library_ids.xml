@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <item name="video_info_scroll" type="id" />
+    <item name="video_library_view" type="id" />
+    <item name="video_grid" type="id" />
+    <item name="video_search_input" type="id" />
+</resources>

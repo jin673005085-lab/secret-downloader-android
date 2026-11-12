@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <item name="conversion_library_view" type="id" />
+    <item name="conversion_work_grid" type="id" />
+</resources>

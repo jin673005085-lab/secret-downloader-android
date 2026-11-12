@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <item name="work_viewer" type="id" />
+    <item name="conversion_creator" type="id" />
+    <item name="share_input" type="id" />
+    <item name="setting_quality" type="id" />
+    <item name="setting_threads" type="id" />
+    <item name="task_detail_scroll" type="id" />
+</resources>

@@ -1,0 +1,32 @@
+{
+  "awemeId": "7702728846361253007",
+  "awemeType": 68,
+  "images": [
+    {
+      "width": 2160,
+      "height": 2880,
+      "uri": "tos-cn-i-0813/ogQiWuulpsAABIbtrxPAalAoPiIDOiAE1jWv7",
+      "urlList": ["https://cdn.example/original-cover.webp"],
+      "downloadUrlList": ["https://cdn.example/watermarked-cover.webp"],
+      "clipType": 5,
+      "livePhotoType": 1,
+      "video": {
+        "width": 720,
+        "height": 960,
+        "duration": 3000,
+        "dataSize": 501544,
+        "playAddr": [{"src": "https://cdn.example/animated-original.mp4"}],
+        "bitRateList": [
+          {
+            "width": 720,
+            "height": 960,
+            "bitRate": 1337450,
+            "playAddr": [{"src": "https://cdn.example/animated-original.mp4"}],
+            "videoFormat": "mp4",
+            "fps": 29
+          }
+        ]
+      }
+    }
+  ]
+}

@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    The creator preview renders through a TextureView so it takes part in the page
+    transition animation. A SurfaceView owns a separate window surface, which turns into a
+    black rectangle while the creator page fades/slides away.
+-->
+<androidx.media3.ui.PlayerView xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:id="@+id/creator_preview_player"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    app:surface_type="texture_view"
+    app:use_controller="false"
+    app:resize_mode="fit"
+    app:shutter_background_color="@android:color/transparent" />

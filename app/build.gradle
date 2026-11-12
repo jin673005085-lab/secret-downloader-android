@@ -1,0 +1,48 @@
+plugins {
+    id 'com.android.application'
+    id 'org.jetbrains.kotlin.android'
+}
+
+android {
+    namespace 'cn.secret.downloader'
+    compileSdk 36
+
+    defaultConfig {
+        applicationId 'cn.secret.downloader'
+        minSdk 24
+        targetSdk 36
+        testInstrumentationRunner 'cn.secret.downloader.MotionPhotoSmokeInstrumentation'
+        versionCode 10
+        versionName '0.1.9'
+        ndk { abiFilters 'arm64-v8a' }
+    }
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+    kotlinOptions { jvmTarget = '17' }
+    packaging { jniLibs { useLegacyPackaging = true } }
+    testBuildType providers.gradleProperty('instrumentBuildType').getOrElse('debug')
+    buildTypes {
+        release {
+            minifyEnabled true
+            shrinkResources true
+            // Keep the existing local signing identity so users can update without losing app data.
+            signingConfig signingConfigs.debug
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+        }
+    }
+}
+
+dependencies {
+    implementation 'androidx.media3:media3-exoplayer:1.11.1'
+    implementation 'androidx.media3:media3-ui:1.11.1'
+    implementation 'androidx.recyclerview:recyclerview:1.4.0'
+    implementation 'androidx.dynamicanimation:dynamicanimation:1.1.0'
+    implementation 'androidx.exifinterface:exifinterface:1.4.2'
+    implementation 'io.github.junkfood02.youtubedl-android:library:0.18.1'
+    implementation 'io.github.junkfood02.youtubedl-android:ffmpeg:0.18.1'
+    implementation 'io.github.junkfood02.youtubedl-android:aria2c:0.18.1'
+    testImplementation 'junit:junit:4.13.2'
+    testImplementation 'org.json:json:20240303'
+}
