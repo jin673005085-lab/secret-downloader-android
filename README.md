@@ -2,7 +2,9 @@
 
 独立运行的 Kotlin / Android 原生 App：链接下载、本地视频库、视频转 GIF 与实况照片。最低 Android 7.0，本版仅提供 `arm64-v8a`。
 
-本仓库只包含手机版。安装包见 [Releases](https://github.com/jin673005085-lab/secret-downloader-android/releases)。当前版本 **0.1.9**，包名 `cn.secret.downloader`。
+本仓库只包含手机版。安装包见 [Releases](https://github.com/jin673005085-lab/secret-downloader-android/releases)。当前版本 **0.1.10**，包名 `cn.secret.downloader`。
+
+0.1.10 修复混淆 Release 在新设备首次解压下载引擎时失败、任务一直停在“解析中”的问题；引擎初始化异常会显示失败原因，后台服务停止时未完成任务标记为“已中断”。沿用原签名覆盖更新，不清空已有任务和媒体记录。
 
 ## 功能
 
@@ -41,7 +43,9 @@ Windows 脚本将输出放到 `%GRADLE_USER_HOME%\secret-downloader-build`，未
 
 ## 验证
 
-[验收记录](ACCEPTANCE.md) 与 [手工测试清单](MANUAL_TEST_CHECKLIST.md) 包含问题清单、修复和具体边界。Debug / Release 各 103 项单元测试通过，lint 无错误；一加真机验证了导航、两库隔离、全选、播放器、真实下载、真实 GIF / 实况转换、服务状态与杀进程恢复；混淆 Release 另通过真实界面黑盒测试。
+[验收记录](ACCEPTANCE.md) 与 [手工测试清单](MANUAL_TEST_CHECKLIST.md) 包含问题清单、修复和具体边界。0.1.10 的 Debug / Release 各 104 项单元测试通过，Release lint 无错误。此前 0.1.9 在一加真机验证了导航、两库隔离、全选、播放器、真实下载、真实 GIF / 实况转换、服务状态与杀进程恢复；混淆 Release 另通过真实界面黑盒测试。新版本增加不依赖旧引擎缓存的 ZIP 解压回归探针，避免已初始化的测试设备掩盖首次解压错误。
+
+0.1.10 已在 OPPO Pad OPD2506（Android 16、4 KB 内存页）覆盖安装验证：首次引擎准备、ZIP 探针及三个引擎初始化通过；用户提供的同一链接真实下载 630.6 MB 成功，自动入库并打开 Media3 播放页；高画质 GIF 与完整 9 秒实况转换、查看器播放通过。另一抖音样本得到明确平台失败，任务正常转为失败，没有继续停在“解析中”；不代表所有平台链接均可下载。
 
 2026-11-12，维护者确认最新版生成的实况在微信好友与朋友圈均能播放。其他手机、相册和微信版本需分别验证。旧格式实况需重新生成或下载，不自动覆盖原文件。
 

@@ -7,6 +7,23 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class TaskTest {
+    @Test fun engineLinkageFailureBecomesRetryableAndDoesNotReviveStoppedTasks() {
+        val parsing = Task("startup", TaskType.DOWNLOAD, "startup", status = TaskStatus.PARSING,
+            speedBps = 100, etaSeconds = 5)
+        val failed = TaskTransitions.fail(parsing, NoClassDefFoundError("MissingEngineDependency"), 200)
+        assertEquals(TaskStatus.FAILED, failed.status)
+        assertTrue(failed.errorMessage!!.contains("引擎无法初始化"))
+        assertTrue(failed.errorMessage!!.contains("MissingEngineDependency"))
+        assertNull(failed.speedBps)
+        assertNull(failed.etaSeconds)
+        assertEquals(200L, failed.finishedAt)
+        assertEquals(TaskStatus.QUEUED, TaskTransitions.retry(failed).status)
+        for (status in listOf(TaskStatus.PAUSED, TaskStatus.CANCELED, TaskStatus.COMPLETED, TaskStatus.INTERRUPTED)) {
+            val stopped = parsing.copy(status = status)
+            assertEquals(stopped, TaskTransitions.fail(stopped, LinkageError("late error"), 300))
+        }
+    }
+
     private fun task(status: TaskStatus = TaskStatus.RUNNING) = Task("id", TaskType.DOWNLOAD, "测试任务",
         status = status, stage = TaskStage.DOWNLOADING, progress = .42f, bytesDone = 42,
         bytesTotal = 100, speedBps = 12, etaSeconds = 5, createdAt = 100)

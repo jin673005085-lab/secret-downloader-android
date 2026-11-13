@@ -13,6 +13,7 @@ import android.os.Build
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
+import android.util.Log
 import org.json.JSONObject
 import java.io.File
 import java.io.InterruptedIOException
@@ -88,7 +89,8 @@ class DownloadService : Service() {
             val outputs = mutableMapOf<String, EngineOutput>()
             val files = if (task.type == TaskType.DOWNLOAD) {
                 DownloadEngine.downloadJob(this, checkNotNull(task.sourceUrl), directory, DownloadSettings.load(this), task.id,
-                    onProgress = { reportProgress(task, it) }, onOutput = { outputs[it.file.absolutePath] = it })
+                    onProgress = { reportProgress(task, it) }, onOutput = { outputs[it.file.absolutePath] = it },
+                    onStatus = { Log.i("DownloadService", it) })
             } else {
                 reportProgress(task, EngineProgress(TaskStage.READING))
                 val input = File(directory, "source-video")
@@ -168,22 +170,17 @@ class DownloadService : Service() {
             repository.report(task.id, task.attempt) { it.copy(status = TaskStatus.COMPLETED, stage = TaskStage.SAVING,
                 progress = 1f, bytesDone = published.sumOf { item -> item.sizeBytes }, bytesTotal = published.sumOf { item -> item.sizeBytes },
                 speedBps = null, etaSeconds = null, finishedAt = System.currentTimeMillis(), outputUri = first.localUri, coverUri = first.coverUri) }
-        } catch (error: Exception) {
+        } catch (error: Throwable) {
             val current = repository.get(task.id)
             keepFiles = current?.status != TaskStatus.CANCELED && (current?.status in setOf(TaskStatus.PAUSED, TaskStatus.INTERRUPTED) ||
                 Thread.currentThread().isInterrupted || error is InterruptedException || error is DownloadCanceledException)
             if (!Thread.currentThread().isInterrupted && error !is InterruptedException && error !is DownloadCanceledException &&
                 current?.status !in setOf(TaskStatus.PAUSED, TaskStatus.CANCELED, TaskStatus.INTERRUPTED)) {
-                val detail = error.message.orEmpty()
-                val message = when {
-                    detail.contains("No space", true) || detail.contains("ENOSPC", true) -> "存储空间不足，请清理空间后重试"
-                    detail.contains("Invalid data", true) || detail.contains("decoder", true) -> "此视频格式暂不支持，请换一个视频或重试"
-                    else -> detail.ifBlank { "处理失败，请重试" }.takeLast(1200)
-                }
-                repository.report(task.id, task.attempt) { it.copy(status = TaskStatus.FAILED, errorMessage = message,
-                    speedBps = null, etaSeconds = null, finishedAt = System.currentTimeMillis()) }
+                Log.e("DownloadService", "Task ${task.id} failed", error)
+                repository.report(task.id, task.attempt) { TaskTransitions.fail(it, error, System.currentTimeMillis()) }
                 keepFiles = task.type == TaskType.DOWNLOAD
             }
+            if (error is VirtualMachineError || error is ThreadDeath) throw error
         } finally { if (!keepFiles) directory.deleteRecursively() }
     }
 
@@ -251,7 +248,13 @@ class DownloadService : Service() {
     override fun onDestroy() {
         if (activeService === this) activeService = null
         subscription?.close()
-        jobs.keys.toList().forEach { stopTask(this, it, false) }
+        jobs.keys.toList().forEach { id ->
+            repository.get(id)?.let { task -> repository.report(id, task.attempt) {
+                it.copy(status = TaskStatus.INTERRUPTED, speedBps = null, etaSeconds = null,
+                    errorMessage = "后台任务已停止，请继续或重试。")
+            } }
+            stopTask(this, id, false)
+        }
         executor.shutdownNow()
         super.onDestroy()
     }

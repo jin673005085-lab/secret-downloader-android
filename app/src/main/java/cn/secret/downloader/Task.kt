@@ -48,6 +48,20 @@ internal object TaskTransitions {
         task.copy(status = TaskStatus.CANCELED, speedBps = null, etaSeconds = null, finishedAt = now)
     } else task
 
+    fun fail(task: Task, error: Throwable, now: Long): Task {
+        if (task.status !in setOf(TaskStatus.QUEUED, TaskStatus.PARSING, TaskStatus.RUNNING)) return task
+        val detail = error.message.orEmpty()
+        val message = when {
+            error is LinkageError -> "下载与转换引擎无法初始化，请更新兼容版本后重试。\n${error.cause?.message ?: detail.ifBlank { error.javaClass.simpleName }}"
+            error is OutOfMemoryError -> "内存不足，请关闭其他应用后重试。"
+            detail.contains("No space", true) || detail.contains("ENOSPC", true) -> "存储空间不足，请清理空间后重试"
+            detail.contains("Invalid data", true) || detail.contains("decoder", true) -> "此视频格式暂不支持，请换一个视频或重试"
+            else -> detail.ifBlank { "处理失败，请重试" }
+        }
+        return task.copy(status = TaskStatus.FAILED, errorMessage = message.takeLast(1200),
+            speedBps = null, etaSeconds = null, finishedAt = now)
+    }
+
     fun interruptedOnRestart(task: Task): Task = if (task.status in setOf(
             TaskStatus.QUEUED, TaskStatus.PARSING, TaskStatus.RUNNING, TaskStatus.PAUSED)) {
         task.copy(status = TaskStatus.INTERRUPTED, speedBps = null, etaSeconds = null,

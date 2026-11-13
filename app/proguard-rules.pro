@@ -1,5 +1,9 @@
 # Native engine packages use reflection and extract bundled resources by name.
 -keep class com.yausername.** { *; }
+# Commons Compress registers ZIP fields with reflective no-argument constructors during first extraction.
+-keep,allowobfuscation class * implements org.apache.commons.compress.archivers.zip.ZipExtraField {
+    public <init>();
+}
 -keepclassmembers class * {
     @android.webkit.JavascriptInterface <methods>;
 }

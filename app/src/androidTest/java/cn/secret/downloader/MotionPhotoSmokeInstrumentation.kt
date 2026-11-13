@@ -25,6 +25,7 @@ class MotionPhotoSmokeInstrumentation : Instrumentation() {
     private var integration = false
     private var serviceCommands = false
     private var releaseUi = false
+    private var engineStartup = false
     private var remoteDownload = false
     private var recovery: String? = null
 
@@ -39,16 +40,18 @@ class MotionPhotoSmokeInstrumentation : Instrumentation() {
         integration = arguments?.getString("integration") == "true"
         serviceCommands = arguments?.getString("service_commands") == "true"
         releaseUi = arguments?.getString("release_ui") == "true"
+        engineStartup = arguments?.getString("engine_startup") == "true"
         remoteDownload = arguments?.getString("remote_download") == "true"
         recovery = arguments?.getString("recovery")?.takeIf { it == "prepare" || it == "verify" }
         start()
     }
 
     override fun onStart() {
-        if (navigation || tasks || library || player || works || integration || serviceCommands || releaseUi || remoteDownload || recovery != null) {
+        if (engineStartup || navigation || tasks || library || player || works || integration || serviceCommands || releaseUi || remoteDownload || recovery != null) {
             val report = Bundle()
             try {
                 val result = when {
+                    engineStartup -> EngineStartupSmokeTest.run(this)
                     releaseUi -> ReleaseUiSmokeTest.run(this)
                     recovery == "prepare" -> ProcessRecoverySmokeTest.prepare(this)
                     recovery == "verify" -> ProcessRecoverySmokeTest.verify(this)
