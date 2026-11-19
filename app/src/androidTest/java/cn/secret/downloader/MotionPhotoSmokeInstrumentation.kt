@@ -25,8 +25,10 @@ class MotionPhotoSmokeInstrumentation : Instrumentation() {
     private var integration = false
     private var serviceCommands = false
     private var releaseUi = false
+    private var mediaPicker = false
     private var engineStartup = false
     private var remoteDownload = false
+    private var instagramUrl: String? = null
     private var recovery: String? = null
 
     override fun onCreate(arguments: Bundle?) {
@@ -40,23 +42,34 @@ class MotionPhotoSmokeInstrumentation : Instrumentation() {
         integration = arguments?.getString("integration") == "true"
         serviceCommands = arguments?.getString("service_commands") == "true"
         releaseUi = arguments?.getString("release_ui") == "true"
+        mediaPicker = arguments?.getString("media_picker") == "true"
         engineStartup = arguments?.getString("engine_startup") == "true"
         remoteDownload = arguments?.getString("remote_download") == "true"
+        instagramUrl = arguments?.getString("instagram_url")
         recovery = arguments?.getString("recovery")?.takeIf { it == "prepare" || it == "verify" }
         start()
     }
 
     override fun onStart() {
-        if (engineStartup || navigation || tasks || library || player || works || integration || serviceCommands || releaseUi || remoteDownload || recovery != null) {
+        if (mediaPicker || engineStartup || navigation || tasks || library || player || works || integration || serviceCommands || releaseUi || remoteDownload || recovery != null || instagramUrl != null) {
             val report = Bundle()
             try {
                 val result = when {
+                    mediaPicker -> MediaPickerSmokeTest.run(this)
                     engineStartup -> EngineStartupSmokeTest.run(this)
                     releaseUi -> ReleaseUiSmokeTest.run(this)
                     recovery == "prepare" -> ProcessRecoverySmokeTest.prepare(this)
                     recovery == "verify" -> ProcessRecoverySmokeTest.verify(this)
                     serviceCommands -> ServiceCommandsSmokeTest.run(this)
                     remoteDownload -> RemoteDownloadSmokeTest.run(this)
+                    instagramUrl != null -> {
+                        val input = InputParser.parse(checkNotNull(instagramUrl))
+                        check(input.platform == Platform.INSTAGRAM)
+                        val job = DownloadJob("instagram-smoke-${System.nanoTime()}")
+                        val sources = DownloadEngine.resolveMedia(targetContext, input, DownloadSettings.load(targetContext), job)
+                        check(sources.isNotEmpty())
+                        "Instagram parsed ${sources.size} attachment(s): ${sources.joinToString { it.kind }}"
+                    }
                     integration -> RealConversionSmokeTest.run(this)
                     works -> ConversionLibrarySmokeTest.run(this)
                     player -> LocalPlayerSmokeTest.run(this)

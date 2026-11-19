@@ -88,9 +88,12 @@ class DownloadService : Service() {
             val params = JSONObject(task.params)
             val outputs = mutableMapOf<String, EngineOutput>()
             val files = if (task.type == TaskType.DOWNLOAD) {
+                val selection = params.optJSONArray("mediaSelection")?.let { array ->
+                    (0 until array.length()).map { array.getString(it) }
+                }
                 DownloadEngine.downloadJob(this, checkNotNull(task.sourceUrl), directory, DownloadSettings.load(this), task.id,
                     onProgress = { reportProgress(task, it) }, onOutput = { outputs[it.file.absolutePath] = it },
-                    onStatus = { Log.i("DownloadService", it) })
+                    onStatus = { Log.i("DownloadService", it) }, selection = selection)
             } else {
                 reportProgress(task, EngineProgress(TaskStage.READING))
                 val input = File(directory, "source-video")
@@ -119,7 +122,8 @@ class DownloadService : Service() {
                 listOf(output)
             }
             check(files.isNotEmpty()) { "没有找到可保存的媒体文件" }
-            val published = mutableListOf<MediaItem>()
+            val published = mutableListOf<TaskOutput>()
+            var publishedBytes = 0L
             files.forEachIndexed { index, original ->
                 checkRunning(task)
                 val info = outputs[original.absolutePath]
@@ -153,7 +157,10 @@ class DownloadService : Service() {
                     }
                     throw stopped
                 }
-                if (file.extension.lowercase() !in setOf("jpg", "jpeg", "png", "webp", "avif") || item.type == MediaType.LIVE_PHOTO) {
+                val fromFile = TaskOutputKind.fromMime(MediaPublisher.mimeType(file.extension))
+                val kind = if (item.type == MediaType.LIVE_PHOTO) TaskOutputKind.LIVE_PHOTO else fromFile
+                val indexed = kind != TaskOutputKind.IMAGE
+                if (indexed) {
                     val media = MediaRepository.get(this)
                     main.post {
                         val latest = repository.get(task.id)
@@ -164,12 +171,13 @@ class DownloadService : Service() {
                         }
                     }
                 }
-                published += item
+                published += TaskOutput(checkNotNull(item.localUri), file.name, kind, item.coverUri, item.id.takeIf { indexed })
+                publishedBytes += item.sizeBytes
             }
             val first = published.first()
             repository.report(task.id, task.attempt) { it.copy(status = TaskStatus.COMPLETED, stage = TaskStage.SAVING,
-                progress = 1f, bytesDone = published.sumOf { item -> item.sizeBytes }, bytesTotal = published.sumOf { item -> item.sizeBytes },
-                speedBps = null, etaSeconds = null, finishedAt = System.currentTimeMillis(), outputUri = first.localUri, coverUri = first.coverUri) }
+                progress = 1f, bytesDone = publishedBytes, bytesTotal = publishedBytes,
+                speedBps = null, etaSeconds = null, finishedAt = System.currentTimeMillis(), outputUri = first.uri, coverUri = first.coverUri, outputs = published.toList()) }
         } catch (error: Throwable) {
             val current = repository.get(task.id)
             keepFiles = current?.status != TaskStatus.CANCELED && (current?.status in setOf(TaskStatus.PAUSED, TaskStatus.INTERRUPTED) ||

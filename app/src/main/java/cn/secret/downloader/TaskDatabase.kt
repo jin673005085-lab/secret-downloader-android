@@ -19,6 +19,10 @@ internal object TaskCodec {
         put("createdAt", task.createdAt); put("finishedAt", task.finishedAt)
         put("outputUri", task.outputUri); put("errorMessage", task.errorMessage)
         put("params", task.params); put("attempt", task.attempt)
+        if (task.outputs.isNotEmpty()) put("outputs", JSONArray(task.outputs.map { output -> JSONObject().apply {
+            put("uri", output.uri); put("name", output.name); put("kind", output.kind.name)
+            put("coverUri", output.coverUri); put("mediaId", output.mediaId)
+        } }))
     }.toString()
 
     fun decode(value: String): Task = JSONObject(value).let { data ->
@@ -31,7 +35,14 @@ internal object TaskCodec {
             bytesDone = data.getLong("bytesDone"), bytesTotal = long("bytesTotal"), speedBps = long("speedBps"),
             etaSeconds = long("etaSeconds"), createdAt = data.getLong("createdAt"), finishedAt = long("finishedAt"),
             outputUri = string("outputUri"), errorMessage = string("errorMessage"),
-            params = data.getString("params"), attempt = data.optInt("attempt", 0))
+            params = data.getString("params"), attempt = data.optInt("attempt", 0),
+            outputs = data.optJSONArray("outputs")?.let { rows ->
+                List(rows.length()) { index -> rows.getJSONObject(index).let { row ->
+                    TaskOutput(row.getString("uri"), row.getString("name"), TaskOutputKind.valueOf(row.getString("kind")),
+                        row.optString("coverUri", "").takeIf(String::isNotEmpty),
+                        row.optString("mediaId", "").takeIf(String::isNotEmpty))
+                } }
+            }.orEmpty())
     }
 }
 

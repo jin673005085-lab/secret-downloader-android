@@ -28,17 +28,27 @@ object MediaThumbnails {
     internal data class VideoInfo(val durationMs: Long, val width: Int, val height: Int, val coverUri: String?)
 
     /** Keeps the previous cover for the same binding and rejects results for recycled cells. */
-    fun bind(view: ImageView, item: MediaItem, fallback: android.graphics.drawable.Drawable) {
-        val key = "${item.id}|${item.coverUri}|${item.localUri}|${item.motionVideoUri}|${item.sizeBytes}|${item.exists}"
+    fun bind(view: ImageView, item: MediaItem, fallback: android.graphics.drawable.Drawable,
+             maxEdge: Int = 768, videoFallback: Boolean = item.type != MediaType.GIF) {
+        val key = "${item.id}|${item.coverUri}|${item.localUri}|${item.motionVideoUri}|${item.sizeBytes}|${item.exists}|$maxEdge|$videoFallback"
+        bind(view, key, if (item.exists) listOfNotNull(item.coverUri, item.localUri, item.motionVideoUri) else emptyList(),
+            fallback, maxEdge, videoFallback)
+    }
+
+    internal fun bind(view: ImageView, output: TaskOutput, fallback: android.graphics.drawable.Drawable?, maxEdge: Int = 384) {
+        bind(view, "task|${output.coverUri}|${output.uri}|$maxEdge", listOfNotNull(output.coverUri, output.uri),
+            fallback, maxEdge, output.kind == TaskOutputKind.VIDEO)
+    }
+
+    private fun bind(view: ImageView, key: String, sources: List<String>, fallback: android.graphics.drawable.Drawable?,
+                     maxEdge: Int, videoFallback: Boolean) {
         if (bindings[view]?.key == key) return
         clear(view)
         val binding = Binding(key)
         bindings[view] = binding
         view.setImageDrawable(fallback)
-        if (!item.exists) return
-        // A saved cover can be missing even when the work itself is readable (older records, cleaned
-        // caches), so every readable address is tried before the placeholder is kept.
-        val addresses = listOfNotNull(item.coverUri, item.localUri, item.motionVideoUri)
+        // Try the media itself if its saved cover is missing.
+        val addresses = sources
             .filter { Uri.parse(it).scheme in setOf("content", "file", "android.resource") }
             .distinct()
         if (addresses.isEmpty()) return
@@ -49,9 +59,9 @@ object MediaThumbnails {
             val bitmap = addresses.firstNotNullOfOrNull { address ->
                 if (binding.canceled.get()) return@firstNotNullOfOrNull null
                 val uri = Uri.parse(address)
-                runCatching { decode(context, uri) }.getOrNull()
-                    ?: if (item.type == MediaType.GIF) null else runCatching {
-                        probeVideo(context, uri, null, "$key|$address")?.coverUri?.let { decode(context, Uri.parse(it)) }
+                runCatching { decode(context, uri, maxEdge) }.getOrNull()
+                    ?: if (!videoFallback) null else runCatching {
+                        probeVideo(context, uri, null, "$key|$address")?.coverUri?.let { decode(context, Uri.parse(it), maxEdge) }
                     }.getOrNull()
             } ?: return@execute
             if (binding.canceled.get()) { bitmap.recycle(); return@execute }
@@ -105,13 +115,13 @@ object MediaThumbnails {
             (source.width * scale).toInt().coerceAtLeast(1), (source.height * scale).toInt().coerceAtLeast(1), true)
     }
 
-    private fun decode(context: Context, uri: Uri): Bitmap? {
+    internal fun decode(context: Context, uri: Uri, maxEdge: Int): Bitmap? {
         if (uri.scheme !in setOf("content", "file", "android.resource")) return null
         val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
         context.contentResolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, bounds) }
         if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return null
         var sample = 1
-        while (maxOf(bounds.outWidth, bounds.outHeight) / sample > 768) sample *= 2
+        while (maxOf(bounds.outWidth, bounds.outHeight) / sample > maxEdge) sample *= 2
         return context.contentResolver.openInputStream(uri)?.use {
             BitmapFactory.decodeStream(it, null, BitmapFactory.Options().apply { inSampleSize = sample; inPreferredConfig = Bitmap.Config.RGB_565 })
         }

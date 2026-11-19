@@ -3,7 +3,7 @@ package cn.secret.downloader
 import java.net.URI
 import java.util.Locale
 
-enum class Platform { DOUYIN, BILIBILI, YOUTUBE, TWITTER, TIKTOK, PORNHUB }
+enum class Platform { DOUYIN, BILIBILI, YOUTUBE, TWITTER, TIKTOK, PORNHUB, INSTAGRAM }
 
 data class ParsedInput(val url: String, val platform: Platform)
 
@@ -47,9 +47,13 @@ object InputParser {
         require(uri.rawUserInfo == null) { "链接格式不正确，请重新复制" }
         val host = uri.host?.lowercase(Locale.ROOT)?.trimEnd('.')
             ?: throw IllegalArgumentException("链接格式不正确，请重新复制")
+        if (InstagramMedia.isHost(uri)) {
+            require(InstagramMedia.valid(uri)) { "请粘贴 Instagram 单条帖子或 Reel 的分享链接" }
+            return ParsedInput(url, Platform.INSTAGRAM)
+        }
         val platform = domains.entries.firstOrNull { (_, hosts) ->
             hosts.any { host == it || host.endsWith(".$it") }
-        }?.key ?: throw IllegalArgumentException("暂不支持这个链接，请使用抖音、哔哩哔哩、YouTube、X、TikTok 或 Pornhub 链接")
+        }?.key ?: throw IllegalArgumentException("暂不支持这个链接，请使用抖音、哔哩哔哩、YouTube、X、TikTok、Pornhub 或 Instagram 链接")
         return ParsedInput(url, platform)
     }
 }

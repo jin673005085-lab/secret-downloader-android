@@ -231,6 +231,44 @@ object TaskSystemSmokeTest {
                 ready("TASK_DETAIL")
                 centerBack()
             }
+            val previewFile = File.createTempFile("task-preview-", ".png", context.cacheDir)
+            val previewTask = completed.first()
+            val original = current(previewTask.id)
+            try {
+                val bitmap = android.graphics.Bitmap.createBitmap(12, 12, android.graphics.Bitmap.Config.ARGB_8888)
+                try {
+                    bitmap.eraseColor(android.graphics.Color.BLUE)
+                    previewFile.outputStream().use { check(bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it)) }
+                } finally { bitmap.recycle() }
+                val address = android.net.Uri.fromFile(previewFile).toString()
+                val picture = TaskOutput(address, "photo.png", TaskOutputKind.IMAGE)
+                main { repository.updateFromFake(listOf(original.copy(outputs = listOf(picture,
+                    TaskOutput("content://not-a-real-source/movie", "movie.mp4", TaskOutputKind.VIDEO))))) }
+                openTask(previewTask.id)
+                val tile = main { view("task_media_tile_0") as ViewGroup }
+                await("saved album thumbnail decoded") {
+                    val thumbnail = tile.getChildAt(0) as android.widget.ImageView
+                    (thumbnail.drawable as? android.graphics.drawable.BitmapDrawable)?.bitmap?.getPixel(0, 0) == android.graphics.Color.BLUE
+                }
+                main { check(view("task_media_tile_1").contentDescription.contains("视频")) }
+                click("task_media_tile_0")
+                val deadline = SystemClock.uptimeMillis() + 5_000
+                var displayed = false
+                do {
+                    val screen = checkNotNull(instrumentation.uiAutomation.takeScreenshot())
+                    try { displayed = screen.getPixel(screen.width / 2, screen.height / 2) == android.graphics.Color.BLUE }
+                    finally { screen.recycle() }
+                    if (!displayed) SystemClock.sleep(100)
+                } while (!displayed && SystemClock.uptimeMillis() < deadline)
+                check(displayed) { "Full-screen task image did not render" }
+                instrumentation.sendKeyDownUpSync(android.view.KeyEvent.KEYCODE_BACK)
+                ready("TASK_DETAIL")
+                centerBack()
+                report += "Completed album thumbnails and full-screen local photo: PASS"
+            } finally {
+                main { repository.updateFromFake(listOf(original)) }
+                previewFile.delete()
+            }
             main {
                 check(owned.all { current(it).outputUri == null }) { "Fake engine created a real output URI" }
                 check(DownloadService.activeDownloadCount == serviceCounts.first &&

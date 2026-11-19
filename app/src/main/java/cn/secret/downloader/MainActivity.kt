@@ -2,6 +2,10 @@ package cn.secret.downloader
 
 import android.annotation.SuppressLint
 import android.app.Activity
+import android.app.AlertDialog
+import org.json.JSONArray
+import org.json.JSONObject
+import java.util.UUID
 import android.content.Context
 import android.content.Intent
 import android.content.res.Configuration
@@ -25,6 +29,8 @@ import android.widget.TextView
 import android.widget.Toast
 import java.util.Locale
 
+private const val PICK_INSTAGRAM_COOKIES = 740
+
 class MainActivity : Activity() {
     private lateinit var navigation: NavigationShell
     private lateinit var input: EditText
@@ -36,6 +42,8 @@ class MainActivity : Activity() {
     private lateinit var storageDetail: TextView
     private lateinit var storageFill: JellyProgressBar
     private var tasksSubscription: java.io.Closeable? = null
+    private var mediaDialog: AlertDialog? = null
+    private var previewJob: DownloadJob? = null
     private val taskRows = linkedMapOf<String, Triple<TextView, TextView, JellyProgressBar>>()
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -124,7 +132,7 @@ class MainActivity : Activity() {
         }, spaced())
         input = EditText(this).apply {
             id = R.id.share_input
-            hint = "粘贴视频链接或整段分享文字…"
+            hint = "粘贴图片、视频链接或整段分享文字…"
             minLines = 3
             maxLines = 6
             gravity = Gravity.TOP or Gravity.START
@@ -273,6 +281,27 @@ class MainActivity : Activity() {
         navigation.openOnTab(if (task.type == TaskType.DOWNLOAD) 2 else 1, route, task.id)
     }
 
+    private fun openTaskMedia(output: TaskOutput) {
+        val item = output.mediaId?.let(mediaRepository::get)
+        when (item?.type) {
+            MediaType.VIDEO -> navigation.open(ScreenRoute.PLAY_VIDEO, taskId = "media:${item.id}")
+            MediaType.GIF, MediaType.LIVE_PHOTO -> {
+                val args = JSONObject().put("id", item.id).put("ids", JSONArray().put(item.id))
+                navigation.open(if (item.type == MediaType.GIF) ScreenRoute.VIEW_GIF else ScreenRoute.VIEW_LIVE, taskId = "work:$args")
+            }
+            null -> {
+                val uri = android.net.Uri.parse(output.uri)
+                val mime = when (output.kind) {
+                    TaskOutputKind.VIDEO -> "video/*"
+                    TaskOutputKind.GIF -> "image/gif"
+                    else -> "image/*"
+                }
+                runCatching { startActivity(Intent(Intent.ACTION_VIEW).setDataAndType(uri, mime)
+                    .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)) }.onFailure { toast("未找到可预览这个文件的应用") }
+            }
+        }
+    }
+
     private fun visibleTagged(view: View, tag: String): View? {
         if (!view.isShown) return null
         if (view.tag == tag) return view
@@ -343,7 +372,7 @@ class MainActivity : Activity() {
 
     private fun buildSecondaryPage(route: ScreenRoute, taskId: String?): View {
         if (route == ScreenRoute.TASK_DETAIL && taskId != null) {
-            return TaskDetailView(this, theme, repository, taskId, { navigation.back() }, ::openOutput)
+            return TaskDetailView(this, theme, repository, taskId, { navigation.back() }, ::openOutput, ::openTaskMedia)
         }
         if (route == ScreenRoute.TASK_CENTER) {
             return LinearLayout(this).apply {
@@ -442,12 +471,28 @@ class MainActivity : Activity() {
     }
 
     override fun onDestroy() {
+        mediaDialog?.dismiss()
+        previewJob?.let { job -> Thread(job::cancel, "cancel-media-preview").start() }
+        previewJob = null
         navigation.releasePlayers()
         super.onDestroy()
     }
 
     @Deprecated("The native document picker returns through this Activity callback")
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        if (requestCode == PICK_INSTAGRAM_COOKIES) {
+            if (resultCode == RESULT_OK) data?.data?.let { uri ->
+                Thread {
+                    val result = runCatching { InstagramCookies.import(applicationContext, uri) }
+                    runOnUiThread {
+                        if (!isDestroyed) toast(result.fold({ "已导入 Instagram Cookie" }, {
+                            if (it is IllegalArgumentException) it.message.orEmpty() else "无法导入 Instagram Cookie 文件"
+                        }))
+                    }
+                }.start()
+            }
+            return
+        }
         if (navigation.activeCreator()?.onActivityResult(requestCode, resultCode, data) == true) return
         super.onActivityResult(requestCode, resultCode, data)
     }
@@ -513,7 +558,59 @@ class MainActivity : Activity() {
             return
         }
         input.error = null
-        val task = repository.create(TaskType.DOWNLOAD, "${parsed.platform.name} 链接下载", parsed.url)
+        if (parsed.platform !in setOf(Platform.DOUYIN, Platform.TWITTER, Platform.INSTAGRAM)) {
+            enqueueDownload(parsed)
+            return
+        }
+        if (mediaDialog?.isShowing == true) return
+        val id = "preview-${UUID.randomUUID()}"
+        val job = DownloadJob(id, onCancelNative = { DownloadEngine.cancelPreviewProcess(id) })
+        previewJob = job
+        val settings = DownloadSettings.load(this)
+        val progress = AlertDialog.Builder(this).setTitle("正在解析媒体")
+            .setMessage("正在获取作品中的图片和视频…")
+            .setNegativeButton("取消") { dialog, _ -> dialog.cancel() }.create()
+        progress.setOnCancelListener {
+            previewJob = null
+            Thread(job::cancel, "cancel-media-preview").start()
+        }
+        mediaDialog = progress
+        progress.show()
+        Thread({
+            val result = runCatching {
+                job.addThread(Thread.currentThread())
+                try { DownloadEngine.resolveMedia(applicationContext, parsed, settings, job) }
+                finally { job.removeThread(Thread.currentThread()) }
+            }
+            runOnUiThread {
+                if (previewJob !== job || isFinishing || isDestroyed) return@runOnUiThread
+                previewJob = null
+                progress.dismiss()
+                result.fold(onSuccess = { items ->
+                    val only = items.singleOrNull()
+                    if (only != null && only.kind == "视频") enqueueDownload(parsed, listOf(only.selectionKey))
+                    else showMediaPicker(items) { selection -> enqueueDownload(parsed, selection) }
+                }, onFailure = { error ->
+                    val reason = error.message.orEmpty().ifBlank { "请检查网络和链接是否可公开访问" }.take(500)
+                    val dialog = AlertDialog.Builder(this).setTitle("解析失败").setMessage(reason)
+                        .setNegativeButton("关闭", null)
+                    if (parsed.platform == Platform.TWITTER && error !is IllegalArgumentException &&
+                        !java.net.URI(parsed.url).host.equals("pbs.twimg.com", true)) {
+                        dialog.setMessage("$reason\n\n直接下载将沿用原流程，不支持勾选。")
+                            .setPositiveButton("直接下载") { _, _ -> enqueueDownload(parsed) }
+                    }
+                    mediaDialog = dialog.show()
+                })
+            }
+        }, "resolve-media-preview").start()
+    }
+
+    internal fun showMediaPicker(items: List<MediaSource>, onSelected: (List<String>) -> Unit): AlertDialog =
+        MediaPicker(this, theme).show(items, onSelected).also { mediaDialog = it }
+
+    private fun enqueueDownload(parsed: ParsedInput, selection: List<String>? = null) {
+        val params = JSONObject().apply { if (selection != null) put("mediaSelection", JSONArray(selection)) }
+        val task = repository.create(TaskType.DOWNLOAD, "${parsed.platform.name} 链接下载", parsed.url, params.toString())
         openTask(task)
         requestNotificationPermission()
     }
@@ -557,6 +654,19 @@ class MainActivity : Activity() {
             toast("设置已保存，下次下载生效")
             navigation.back()
         }, spaced())
+        body.addView(label("Instagram 登录 Cookie", UiTheme.BODY, true), spaced())
+        body.addView(label("可选。选择自己账号导出的 Netscape 格式 Cookie 文件。", UiTheme.LABEL))
+        body.addView(actionButton("导入 Instagram Cookie") {
+            @Suppress("DEPRECATION")
+            startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE)
+                .setType("*/*"), PICK_INSTAGRAM_COOKIES)
+        }, smallSpaced())
+        body.addView(actionButton("清除 Instagram Cookie") {
+            Thread {
+                InstagramCookies.clear(applicationContext)
+                runOnUiThread { if (!isDestroyed) toast("已清除 Instagram Cookie") }
+            }.start()
+        }, smallSpaced())
     }
 
     private fun updateStorage() {

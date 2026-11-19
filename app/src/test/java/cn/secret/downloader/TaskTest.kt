@@ -75,6 +75,15 @@ class TaskTest {
         assertTrue(task(TaskStatus.PAUSED).isOngoing)
     }
 
+    @Test fun completedPreviewKeepsAllOutputsInSavedOrder() {
+        val outputs = listOf(TaskOutput("content://media/picture", "photo.jpg", TaskOutputKind.IMAGE),
+            TaskOutput("content://media/movie", "video.mp4", TaskOutputKind.VIDEO, "content://cover/movie", "video-id"))
+        val saved = task(TaskStatus.COMPLETED).copy(outputUri = outputs.first().uri, outputs = outputs)
+        assertEquals(outputs, TaskCodec.decode(TaskCodec.encode(saved)).previewOutputs(emptyList()) { error("unexpected legacy lookup") })
+        assertTrue(saved.copy(status = TaskStatus.RUNNING).previewOutputs(emptyList()) { error("unexpected legacy lookup") }.isEmpty())
+        assertEquals(listOf(outputs.first()), saved.copy(outputs = emptyList()).previewOutputs(emptyList()) { outputs.first() })
+    }
+
     @Test fun serializedTasksPreserveOptionalFieldsLongSizesAndParameters() {
         val original = task(TaskStatus.FAILED).copy(
             title = "引号\"与换行\n封面", sourceUrl = "https://example.com/video", coverUri = "content://media/2",

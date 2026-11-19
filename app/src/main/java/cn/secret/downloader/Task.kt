@@ -4,6 +4,40 @@ enum class TaskType { DOWNLOAD, LIVE_PHOTO, GIF }
 enum class TaskStatus { QUEUED, PARSING, RUNNING, PAUSED, COMPLETED, FAILED, CANCELED, INTERRUPTED }
 enum class TaskStage { PARSING, DOWNLOADING, MERGING, SAVING, READING, ENCODING }
 
+enum class TaskOutputKind(val label: String, val badge: String?) {
+    IMAGE("图片", null), VIDEO("视频", "▶"), GIF("GIF 动图", "▶ GIF"), LIVE_PHOTO("实况照片", "▶ 实况"), FILE("文件", null);
+
+    companion object {
+        internal fun fromMime(mime: String?): TaskOutputKind = when {
+            mime == "image/gif" -> GIF
+            mime?.startsWith("image/") == true -> IMAGE
+            mime?.startsWith("video/") == true -> VIDEO
+            else -> FILE
+        }
+
+        internal fun fromMedia(type: MediaType): TaskOutputKind = when (type) {
+            MediaType.VIDEO -> VIDEO
+            MediaType.GIF -> GIF
+            MediaType.LIVE_PHOTO -> LIVE_PHOTO
+        }
+    }
+}
+
+data class TaskOutput(val uri: String, val name: String, val kind: TaskOutputKind,
+                      val coverUri: String? = null, val mediaId: String? = null)
+
+internal fun Task.previewOutputs(items: List<MediaItem>, legacyOutput: (String) -> TaskOutput): List<TaskOutput> {
+    if (status != TaskStatus.COMPLETED) return emptyList()
+    if (outputs.isNotEmpty()) return outputs
+    val prefix = "$id-$attempt-"
+    val saved = items.asSequence().filter { it.taskId == id && it.id.startsWith(prefix) }
+        .sortedBy { it.id.removePrefix(prefix).toIntOrNull() ?: Int.MAX_VALUE }
+        .mapNotNull { item -> item.localUri?.let { TaskOutput(it, item.title, TaskOutputKind.fromMedia(item.type), item.coverUri, item.id) } }
+        .toList()
+    val first = outputUri?.let { uri -> saved.firstOrNull { it.uri == uri } ?: legacyOutput(uri) }
+    return (listOfNotNull(first) + saved).distinctBy { it.uri }
+}
+
 data class Task(
     val id: String,
     val type: TaskType,
@@ -23,6 +57,7 @@ data class Task(
     val errorMessage: String? = null,
     val params: String = "{}",
     val attempt: Int = 0,
+    val outputs: List<TaskOutput> = emptyList(),
 ) {
     val isOngoing: Boolean get() = status != TaskStatus.COMPLETED && status != TaskStatus.CANCELED
 }
@@ -41,7 +76,7 @@ internal object TaskTransitions {
         task.copy(status = TaskStatus.QUEUED,
             stage = if (task.type == TaskType.DOWNLOAD) TaskStage.PARSING else TaskStage.READING,
             progress = 0f, bytesDone = 0, speedBps = null, etaSeconds = null,
-            finishedAt = null, outputUri = null, errorMessage = null, attempt = task.attempt + 1)
+            finishedAt = null, outputUri = null, errorMessage = null, attempt = task.attempt + 1, outputs = emptyList())
     } else task
 
     fun cancel(task: Task, now: Long): Task = if (task.isOngoing) {

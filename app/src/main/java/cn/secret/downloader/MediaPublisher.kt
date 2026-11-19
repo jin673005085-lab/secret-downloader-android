@@ -21,12 +21,14 @@ object MediaPublisher {
         if (source.extension.equals("gif", true)) GIF_DISPLAY_PATH
         else if (source.name.endsWith("_MP.jpg", ignoreCase = true)) LIVE_DISPLAY_PATH else DISPLAY_PATH
 
+    internal fun mimeType(extension: String): String = MimeTypeMap.getSingleton().getMimeTypeFromExtension(extension.lowercase())
+        ?: if (extension.equals("avif", true)) "image/avif" else "application/octet-stream"
+
     fun publish(context: Context, source: File): String = publishResult(context, source).path
 
     fun publishResult(context: Context, source: File): Published {
         require(source.isFile && source.length() > 0) { "下载文件为空" }
-        val mime = MimeTypeMap.getSingleton().getMimeTypeFromExtension(source.extension.lowercase())
-            ?: "application/octet-stream"
+        val mime = mimeType(source.extension)
         val path = displayPath(source)
         if (Build.VERSION.SDK_INT >= 29) {
             val resolver = context.contentResolver

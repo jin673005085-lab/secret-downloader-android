@@ -29,7 +29,7 @@ class DownloadEngineTest {
           {"content_type":"video/mp4","bitrate":3000,"url":"https://video.twimg.com/vid/1920x1080/high.mp4"},
           {"content_type":"application/x-mpegURL","url":"https://video.twimg.com/a.m3u8"}
         ]}},
-        {"type":"animated_gif","video_info":{"variants":[{"url":"https://video.twimg.com/gif.mp4"}]}}
+        {"type":"animated_gif","media_url_https":"https://pbs.twimg.com/tweet_video_thumb/Example.jpg","video_info":{"variants":[{"url":"https://video.twimg.com/gif.mp4"}]}}
       ],
       "quoted_tweet":{"mediaDetails":[{"type":"photo","media_url_https":"https://pbs.twimg.com/media/Quoted.jpg"}]}
     }"""
@@ -102,6 +102,7 @@ class DownloadEngineTest {
         assertFalse(sources[0].isGif)
         assertFalse(sources[1].isGif)
         assertTrue(sources[2].isGif)
+        assertEquals(listOf("https://pbs.twimg.com/tweet_video_thumb/Example.jpg?name=small"), sources[2].previewCandidates)
         assertFalse(sources.any { source -> source.urls.any { it.contains("Quoted") } })
         val capped = DownloadEngine.parseTwitterMedia(JSONObject(mixedTweet), post, "720")
         assertTrue(capped[1].urls.single().endsWith("low.mp4"))

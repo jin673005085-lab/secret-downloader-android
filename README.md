@@ -2,13 +2,15 @@
 
 独立运行的 Kotlin / Android 原生 App：链接下载、本地视频库、视频转 GIF 与实况照片。最低 Android 7.0，本版仅提供 `arm64-v8a`。
 
-本仓库只包含手机版。安装包见 [Releases](https://github.com/jin673005085-lab/secret-downloader-android/releases)。当前版本 **0.1.10**，包名 `cn.secret.downloader`。
+本仓库只包含手机版。安装包见 [Releases](https://github.com/jin673005085-lab/secret-downloader-android/releases)。当前版本 **0.1.11**，包名 `cn.secret.downloader`。
+
+0.1.11 在已完成的任务详情中增加媒体预览，支持逐项查看图集和打开播放。媒体选择列表会加载 GIF 封面并显示角标。Instagram 支持导入登录 Cookie，遇到 HTTP 429 会延迟重试并提示原因。
 
 0.1.10 修复混淆 Release 在新设备首次解压下载引擎时失败、任务一直停在“解析中”的问题；引擎初始化异常会显示失败原因，后台服务停止时未完成任务标记为“已中断”。沿用原签名覆盖更新，不清空已有任务和媒体记录。
 
 ## 功能
 
-- 下载：粘贴链接或分享文字，支持抖音、哔哩哔哩、YouTube、X / Twitter、TikTok、Pornhub；使用原生解析、系统 WebView 和 yt-dlp。抖音循环动图 / 实况保存为实况照片，X 动图保存为 GIF。
+- 下载：粘贴链接或分享文字，支持抖音、哔哩哔哩、YouTube、X / Twitter、TikTok、Pornhub、Instagram；使用原生解析、系统 WebView 和 yt-dlp。抖音循环动图 / 实况保存为实况照片，X 动图保存为 GIF。
 - 转换：GIF 支持裁剪、帧率、宽度、画质、速度与循环，最长 15 秒；实况保留完整视频及声音，不限制时长，封面可选视频帧或相册图片。
 - 视频库仅收录普通视频；转换作品库仅收录 GIF 与实况。支持搜索、筛选、排序、收藏、多选、全选及删除确认。
 - Media3 本地播放、手势、续播、全屏与画中画；实况自动播一次、按钮重播、长按播放与松开回封面。
@@ -16,6 +18,8 @@
 - 浅深色主题、弹簧动画及系统关闭动画时降级。正式启动不生成演示数据。
 
 普通下载保存到 `Download/不能说的秘密`，GIF 保存到 `Pictures/不能说的秘密/GIF`，实况保存到 `Pictures/不能说的秘密`。Android 10+ 使用 MediaStore，不申请“所有文件访问权限”；Android 7–9 首次保存申请写入权限。扫描仅处理本应用指定目录中可访问、能确认类型的文件。
+
+粘贴或分享 Instagram 单条帖子、Reel 与官方分享短链；不支持主页、Stories 和需要 App 登录的私密作品。抖音、X 与 Instagram 的多媒体作品按原帖顺序列出，默认全选。点缩略图可放大预览，点复选框调整下载项；没有可用封面或预览加载失败时仍可勾选。单张图片也可先预览，取消不会创建下载任务。普通图片保存在公共下载目录，不加入 App 的视频库。
 
 ## 构建
 
@@ -60,6 +64,6 @@ Windows 脚本将输出放到 `%GRADLE_USER_HOME%\secret-downloader-build`，未
 - 实况采用 [Android Motion Photo](https://developer.android.com/media/platform/motion-photo-format)，同时写入 OPlus EXIF / XMP / MPF；布局参考 [oppo-live-photo-maker](https://github.com/Young-Spark/oppo-live-photo-maker)。作品查看器优先使用生成时记录的动态视频片段，不猜测厂商私有格式。
 - 许可证及上游源码见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
 
-平台登录、会员、地域和反爬限制可能影响下载，需手机自身可以访问相应网络；未加入登录或 Cookies 导入。下载续传依赖服务器 Range / 引擎分片恢复；转换继续时重新编码。
+平台登录、会员、地域和反爬限制可能影响下载，需手机自身可以访问相应网络。Instagram 可在设置里导入自己账号的 Netscape 格式 Cookie，仅保存在 App 私有目录，并可随时清除。下载续传依赖服务器 Range / 引擎分片恢复；转换继续时重新编码。
 
 当前 FFmpeg 预构建包部分内部库仍采用 4 KB ELF 对齐，16 KB 内存页设备未经实测；中低端机、长时内存曲线、TalkBack 全流程和 200% 字号仍需补充验收。可选的后台音频模式尚未加入。

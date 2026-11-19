@@ -2,11 +2,13 @@ package cn.secret.downloader
 
 import android.animation.ValueAnimator
 import android.app.AlertDialog
+import android.app.Dialog
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
 import android.graphics.Canvas
+import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.Typeface
 import android.net.Uri
@@ -14,7 +16,9 @@ import android.text.TextUtils
 import android.view.Gravity
 import android.view.View
 import android.widget.FrameLayout
+import android.widget.HorizontalScrollView
 import android.widget.ImageButton
+import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
@@ -24,9 +28,11 @@ import java.io.Closeable
 
 internal class TaskDetailView(
     context: Context, private val theme: UiTheme, private val repository: TaskRepository,
-    private val taskId: String, private val onBack: () -> Unit, private val onOpen: (Task) -> Unit
+    private val taskId: String, private val onBack: () -> Unit, private val onOpen: (Task) -> Unit,
+    private val onPreview: (TaskOutput) -> Unit
 ) : FrameLayout(context) {
     private var observation: Closeable? = null
+    private var mediaObservation: Closeable? = null
     private var current: Task? = null
     private var missing = false
     private var missingHandled = false
@@ -46,6 +52,9 @@ internal class TaskDetailView(
     private val error = card().apply { background = theme.shape(theme.errorSoft); visibility = GONE }
     private val errorMessage = text("", 15f).apply { setTextColor(theme.error) }
     private val progressCard = card()
+    private val previewCard = card().apply { tag = "task_media_preview"; visibility = GONE }
+    private val previewTiles = mutableListOf<ImageView>()
+    private var shownOutputs = emptyList<TaskOutput>()
     private val percent = RollingPercentView(context, theme)
     private val progress = JellyProgressBar(context, theme, 12).apply { tag = "detail_progress" }
     private val bytes = text("", 13f)
@@ -98,6 +107,7 @@ internal class TaskDetailView(
         progressCard.addView(progress, LinearLayout.LayoutParams(-1, dp(24)).apply { topMargin = dp(8) })
         progressCard.addView(bytes, gap())
         body.addView(progressCard, gap())
+        body.addView(previewCard, gap())
         body.addView(card().apply {
             addView(text("处理阶段", 15f, true))
             addView(stages, LinearLayout.LayoutParams(-1, dp(76)).apply { topMargin = dp(8) })
@@ -138,10 +148,17 @@ internal class TaskDetailView(
             missing = task == null
             if (task == null) leaveMissingTask() else bind(task)
         }
+        mediaObservation = MediaRepository.get(context).observeAll {
+            current?.takeIf { task -> task.status == TaskStatus.COMPLETED && task.outputs.isEmpty() }?.let(::bindPreviews)
+        }
     }
 
     override fun onDetachedFromWindow() {
         observation?.close(); observation = null
+        mediaObservation?.close(); mediaObservation = null
+        previewTiles.forEach(MediaThumbnails::clear)
+        shownOutputs = emptyList()
+        current = null
         super.onDetachedFromWindow()
     }
 
@@ -176,6 +193,7 @@ internal class TaskDetailView(
             val color = TaskUi.color(task, theme)
             chip(state, TaskUi.statusLabel(task), color, translucent(color))
         }
+        bindPreviews(task)
         progress.bind(task)
         percent.bind(task)
         bytes.setTextIfChanged("${TaskUi.bytes(task.bytesDone)} / ${task.bytesTotal?.let(TaskUi::bytes) ?: "总量未知"}")
@@ -237,6 +255,82 @@ internal class TaskDetailView(
     private fun showLogs() {
         val message = repository.logs(taskId).joinToString("\n").ifBlank { "暂无日志" }
         AlertDialog.Builder(context).setTitle("任务日志").setMessage(message).setPositiveButton("关闭", null).show()
+    }
+
+    private fun bindPreviews(task: Task) {
+        val media = MediaRepository.get(context)
+        val outputs = task.previewOutputs(media.items) { address ->
+            val uri = Uri.parse(address)
+            val detected = TaskOutputKind.fromMime(runCatching { context.contentResolver.getType(uri) }.getOrNull())
+            val kind = when (task.type) {
+                TaskType.GIF -> TaskOutputKind.GIF
+                TaskType.LIVE_PHOTO -> TaskOutputKind.LIVE_PHOTO
+                TaskType.DOWNLOAD -> if (detected != TaskOutputKind.FILE) detected else
+                    TaskOutputKind.fromMime(MediaPublisher.mimeType(uri.lastPathSegment.orEmpty().substringAfterLast('.', "")))
+            }
+            TaskOutput(address, task.title, kind, task.coverUri)
+        }.filter { it.kind != TaskOutputKind.FILE }
+        if (shownOutputs == outputs) return
+        shownOutputs = outputs
+        previewTiles.forEach(MediaThumbnails::clear)
+        previewTiles.clear()
+        previewCard.removeAllViews()
+        previewCard.visibility = if (outputs.isEmpty()) GONE else VISIBLE
+        if (outputs.isEmpty()) return
+        val single = outputs.size == 1
+        previewCard.addView(text(if (single) "媒体预览" else "媒体预览（${outputs.size}）", 15f, true))
+        val tiles = LinearLayout(context)
+        outputs.forEachIndexed { index, output ->
+            val tile = FrameLayout(context).apply {
+                tag = "task_media_tile_$index"
+                background = theme.control(theme.muted, 12)
+                clipToOutline = true
+                contentDescription = "预览第 ${index + 1} 项${output.kind.label}：${output.name}"
+                isFocusable = true
+                setOnClickListener { if (output.kind == TaskOutputKind.IMAGE) showImage(output) else onPreview(output) }
+                UiMotion.press(this)
+            }
+            val image = ImageView(context).apply {
+                scaleType = ImageView.ScaleType.CENTER_CROP
+                importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+            }
+            previewTiles += image
+            tile.addView(image, LayoutParams(-1, -1))
+            MediaThumbnails.bind(image, output, context.getDrawable(android.R.drawable.ic_menu_gallery))
+            output.kind.badge?.let { badge ->
+                tile.addView(text(badge, 12f, true).apply {
+                    setTextColor(Color.WHITE)
+                    setPadding(dp(8), dp(4), dp(8), dp(4))
+                    background = theme.shape(0xB3000000.toInt(), 8)
+                    importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+                }, LayoutParams(-2, -2, Gravity.BOTTOM or Gravity.END).apply { setMargins(dp(6), dp(6), dp(6), dp(6)) })
+            }
+            if (single) previewCard.addView(tile, gap(10).apply { height = dp(160) })
+            else tiles.addView(tile, LinearLayout.LayoutParams(dp(108), dp(108)).apply { if (index != 0) marginStart = dp(8) })
+        }
+        if (!single) previewCard.addView(HorizontalScrollView(context).apply {
+            isHorizontalScrollBarEnabled = false
+            addView(tiles)
+        }, gap(10))
+    }
+
+    private fun showImage(output: TaskOutput) {
+        val dialog = Dialog(context, android.R.style.Theme_Material_NoActionBar_Fullscreen)
+        val image = ImageView(context).apply {
+            tag = "task_media_full_image"
+            contentDescription = output.name
+            scaleType = ImageView.ScaleType.FIT_CENTER
+        }
+        dialog.setContentView(FrameLayout(context).apply {
+            setBackgroundColor(Color.BLACK)
+            addView(image, LayoutParams(-1, -1))
+            addView(button("关闭") { dialog.dismiss() }, LayoutParams(-2, dp(48), Gravity.TOP or Gravity.END).apply {
+                topMargin = dp(12); marginEnd = dp(12)
+            })
+        })
+        dialog.setOnDismissListener { MediaThumbnails.clear(image) }
+        dialog.show()
+        MediaThumbnails.bind(image, output.copy(coverUri = null), context.getDrawable(android.R.drawable.ic_menu_gallery), 1536)
     }
 
     private fun share(task: Task) {

@@ -39,6 +39,7 @@ object DownloadEngine {
         context: Context, text: String, directory: File, settings: DownloadSettings,
         jobId: String, onProgress: (EngineProgress) -> Unit,
         onOutput: (EngineOutput) -> Unit = {}, onStatus: (String) -> Unit = {},
+        selection: List<String>? = null,
     ): List<File> {
         require(jobId.isNotBlank()) { "任务编号不能为空" }
         val job = DownloadJob(jobId, onProgress) { YoutubeDL.getInstance().destroyProcessById(jobId) }
@@ -53,34 +54,40 @@ object DownloadEngine {
         val result = when (input.platform) {
             Platform.DOUYIN -> {
                 onStatus("正在解析作品…")
-                val open: (URL) -> HttpURLConnection = { url ->
-                    job.check()
-                    (url.openConnection() as HttpURLConnection).also(job::add)
-                }
-                var sources = DouyinResolver.resolve(input.url, settings.quality, open)
-                if (sources.any { it.fileName.endsWith(".image") }) {
-                    val id = checkNotNull(Regex("^douyin_(\\d+)_").find(sources.first().fileName)?.groupValues?.get(1))
-                    onStatus("正在检查图集的原始动态资源…")
-                    val direct = runCatching { DouyinResolver.desktopDetail(id, open) }.getOrNull()
-                    job.check()
-                    val desktop = direct ?: DouyinBrowser.resolve(context, id, job::check)
-                    sources = DouyinResolver.enrichImages(sources, desktop, id, settings.quality)
-                }
-                downloadSources(sources, directory, settings.threads, onStatus, context, job, onOutput)
+                val sources = resolveMedia(context, input, settings, job)
+                downloadSources(selectMedia(sources, selection), directory, settings.threads, onStatus, context, job, onOutput)
             }
             Platform.TWITTER -> {
                 onStatus("正在解析图片和视频…")
                 val sources = try {
-                    twitterSources(input.url, settings.quality, job)
+                    resolveMedia(context, input, settings, job)
                 } catch (error: Exception) {
                     job.check()
-                    // Direct image URLs must never fall through to a video-only extractor.
-                    if (URI(input.url).host.equals("pbs.twimg.com", true)) throw error
+                    // An explicit selection must never fall through to a whole-post download.
+                    if (selection != null || error is IllegalArgumentException || URI(input.url).host.equals("pbs.twimg.com", true)) throw error
                     onStatus("公开附件接口暂不可用，正在尝试备用解析…")
                     null
                 }
-                if (sources != null) downloadSources(sources, directory, settings.threads, onStatus, context, job, onOutput)
+                if (sources != null) downloadSources(selectMedia(sources, selection), directory, settings.threads, onStatus, context, job, onOutput)
                 else downloadWithYtDlp(context, input.url, directory, settings, onStatus, job = job, onOutput = onOutput)
+            }
+            Platform.INSTAGRAM -> {
+                val sources = selectMedia(resolveMedia(context, input, settings, job), selection)
+                sources.map { source ->
+                    val info = source.videoInfo
+                    if (info == null) downloadSources(listOf(source), directory, settings.threads, onStatus, context, job, onOutput).single()
+                    else {
+                        val target = File(directory, source.fileName.substringBeforeLast('.'))
+                        check(target.isDirectory || target.mkdirs()) { "无法创建视频临时目录" }
+                        val infoFile = File(target, "instagram-info.json")
+                        infoFile.writeText(info.toString())
+                        try {
+                            downloadWithYtDlp(context, input.url, target, settings, onStatus, infoFile, job, onOutput).single()
+                        } finally {
+                            infoFile.delete()
+                        }
+                    }
+                }
             }
             Platform.PORNHUB -> {
                 val info = PornhubBrowser.resolve(context, input.url, onStatus)
@@ -104,6 +111,54 @@ object DownloadEngine {
             active.remove(jobId, job)
         }
     }
+
+    internal fun resolveMedia(context: Context, input: ParsedInput, settings: DownloadSettings, job: DownloadJob): List<MediaSource> =
+        when (input.platform) {
+            Platform.DOUYIN -> {
+                val open: (URL) -> HttpURLConnection = { url ->
+                    job.check()
+                    (url.openConnection() as HttpURLConnection).also(job::add)
+                }
+                val sources = DouyinResolver.resolve(input.url, settings.quality, open)
+                if (sources.none { it.fileName.endsWith(".image") }) sources else {
+                    val id = checkNotNull(Regex("^douyin_(\\d+)_").find(sources.first().fileName)?.groupValues?.get(1))
+                    val direct = runCatching { DouyinResolver.desktopDetail(id, open) }.getOrNull()
+                    job.check()
+                    val desktop = direct ?: DouyinBrowser.resolve(context, id, job::check)
+                    DouyinResolver.enrichImages(sources, desktop, id, settings.quality)
+                }
+            }
+            Platform.TWITTER -> twitterSources(input.url, settings.quality, job)
+            Platform.INSTAGRAM -> {
+                val canonical = InstagramMedia.resolve(input.url, job)
+                initialize(context) {}
+                job.check()
+                val cookies = InstagramCookies.copyForExtractor(context)
+                val output = try {
+                    InstagramMedia.retryRateLimit(job::check, { Thread.sleep(2_000) }) {
+                        val request = YoutubeDLRequest(canonical).apply {
+                            addOption("--ignore-config")
+                            addOption("--dump-single-json")
+                            addOption("--skip-download")
+                            addOption("--ignore-no-formats-error")
+                            addOption("--socket-timeout", 12)
+                            addOption("--retries", 0)
+                            cookies?.let { addOption("--cookies", it.absolutePath) }
+                            systemProxyFor(canonical)?.let { addOption("--proxy", it) }
+                        }
+                        YoutubeDL.getInstance().execute(request = request, processId = job.id, redirectErrorStream = false).out
+                    }
+                } finally { cookies?.delete() }
+                job.check()
+                val info = try { JSONObject(output) } catch (_: Exception) {
+                    throw IOException(InstagramMedia.failure(if (output.isBlank()) "" else "invalid response"))
+                }
+                InstagramMedia.sources(info, canonical)
+            }
+            else -> error("此平台不提供媒体清单")
+        }
+
+    internal fun cancelPreviewProcess(id: String) { YoutubeDL.getInstance().destroyProcessById(id) }
 
     @Synchronized
     private fun initialize(context: Context, onStatus: (String) -> Unit) {
@@ -426,7 +481,7 @@ object DownloadEngine {
         require(parsed.scheme in setOf("https", "http") && !parsed.host.isNullOrEmpty() && parsed.rawUserInfo == null) { "无效的媒体地址" }
     }
 
-    private fun connection(url: String, headers: Map<String, String>): HttpURLConnection {
+    internal fun connection(url: String, headers: Map<String, String>): HttpURLConnection {
         requireMediaUrl(url)
         return (URL(url).openConnection() as HttpURLConnection).apply {
             connectTimeout = 8_000
@@ -574,8 +629,15 @@ object DownloadEngine {
                 require((kind == "photo") == (type == "photo")) { "指定附件类型与链接不符，请复制推文链接重试" }
             }
             val stem = "twitter_${id}_${index + 1}"
+            val identity = item.optString("id_str").takeUnless { item.isNull("id_str") || it.isBlank() }
+                ?: item.optString("id").takeUnless { item.isNull("id") || it.isBlank() }
+                ?: (item.optString("media_url_https").ifEmpty { item.optString("media_url") })
+                    .takeIf { it.isNotBlank() }?.let { runCatching { URI(it).rawPath }.getOrNull() }
+            val picture = item.optString("media_url_https").ifEmpty { item.optString("media_url") }
+            val preview = runCatching { twitterImage(picture, "small") }.getOrNull()
             when (type) {
-                "photo" -> result += MediaSource(listOf(originalImage(item.optString("media_url_https").ifEmpty { item.optString("media_url") })), "$stem.image")
+                "photo" -> result += MediaSource(listOf(originalImage(picture)), "$stem.image", selectionId = identity,
+                    previewUrls = listOfNotNull(preview))
                 "video", "animated_gif" -> {
                     val array = item.optJSONObject("video_info")?.optJSONArray("variants") ?: throw IOException("附件 ${index + 1} 没有可下载的视频")
                     val variants = (0 until array.length()).map { array.getJSONObject(it) }.filter {
@@ -588,7 +650,8 @@ object DownloadEngine {
                         dimensions == null || minOf(dimensions.groupValues[1].toInt(), dimensions.groupValues[2].toInt()) <= limit
                     }.ifEmpty { variants.minByOrNull { it.optLong("bitrate", 0) }?.let(::listOf) ?: emptyList() }
                     val best = allowed.maxByOrNull { it.optLong("bitrate", 0) } ?: throw IOException("附件 ${index + 1} 没有可下载的 MP4 视频")
-                    result += MediaSource(listOf(best.getString("url")), "$stem.mp4", isGif = type == "animated_gif")
+                    result += MediaSource(listOf(best.getString("url")), "$stem.mp4", isGif = type == "animated_gif",
+                        selectionId = identity, previewUrls = listOfNotNull(preview))
                 }
             }
         }
@@ -596,12 +659,19 @@ object DownloadEngine {
         return result
     }
 
-    internal fun originalImage(url: String): String {
+    internal fun originalImage(url: String): String = twitterImage(url, "orig")
+
+    private fun twitterImage(url: String, size: String): String {
         val uri = URI(url)
+        val path = uri.path.orEmpty()
+        val photo = Regex("/media/[\\w-]+(?:\\.[a-zA-Z0-9]+)?(?::[\\w]+)?").matches(path)
+        val poster = size == "small" && Regex(
+            "/(?:tweet_video_thumb|(?:ext_tw_video_thumb|amplify_video_thumb)/[0-9]+/pu/img)/[\\w-]+\\.(?:jpg|png|webp)"
+        ).matches(path)
         require(uri.host.equals("pbs.twimg.com", true) && uri.rawUserInfo == null && uri.port in setOf(-1, 80, 443) &&
-            Regex("/media/[\\w-]+(?:\\.[a-zA-Z0-9]+)?(?::[\\w]+)?").matches(uri.path)) { "这不是有效的推特图片地址" }
-        val query = uri.rawQuery?.split('&')?.filter { it.substringBefore('=') != "name" }.orEmpty() + "name=orig"
-        return URI("https", null, "pbs.twimg.com", -1, uri.path.substringBefore(':'), query.joinToString("&"), null).toASCIIString()
+            (photo || poster)) { "这不是有效的推特图片地址" }
+        val query = uri.rawQuery?.split('&')?.filter { it.substringBefore('=') != "name" }.orEmpty() + "name=$size"
+        return URI("https", null, "pbs.twimg.com", -1, path.substringBefore(':'), query.joinToString("&"), null).toASCIIString()
     }
 
     internal fun syndicationToken(id: String): String {
